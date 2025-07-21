@@ -66,6 +66,8 @@ use alloy_rpc_types::{
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportErrorKind;
+use anvil_core::eth::transaction::DepositReceipt;
+use anvil_core::eth::transaction::TypedReceipt;
 use anvil_core::{
     eth::{
         EthRequest,
@@ -317,6 +319,10 @@ impl EthApi {
             }
             EthRequest::EthFeeHistory(count, newest, reward_percentiles) => {
                 self.fee_history(count, newest, reward_percentiles).await.to_rpc_result()
+            }
+            // non eth-standard rpc calls
+            EthRequest::DebugGetRawReceipts(block) => {
+                self.debug_get_raw_receipts(block).await.to_rpc_result()
             }
             // non eth-standard rpc calls
             EthRequest::DebugGetRawTransaction(hash) => {
@@ -1712,6 +1718,43 @@ impl EthApi {
             Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
+    }
+
+    /// Returns an array of EIP-2718 encoded receipts for a block
+    ///
+    /// Handler for RPC call: `debug_getRawReceipts`
+    pub async fn debug_get_raw_receipts(&self, id: BlockId) -> Result<Option<Vec<Bytes>>> {
+        node_info!("debug_getRawReceipts");
+
+        let Some(receipts) = self.backend.block_receipts(id).await? else {
+            return Ok(None);
+        };
+
+        let raw = receipts
+            .into_iter()
+            .map(|receipt| {
+                let mut buf = Vec::new();
+
+                let receipt = receipt.into_inner();
+                let receipt = match receipt {
+                    TypedReceipt::Legacy(r) => TypedReceipt::Legacy(r.into_primitives_receipt()),
+                    TypedReceipt::EIP2930(r) => TypedReceipt::EIP2930(r.into_primitives_receipt()),
+                    TypedReceipt::EIP1559(r) => TypedReceipt::EIP1559(r.into_primitives_receipt()),
+                    TypedReceipt::EIP4844(r) => TypedReceipt::EIP4844(r.into_primitives_receipt()),
+                    TypedReceipt::EIP7702(r) => TypedReceipt::EIP7702(r.into_primitives_receipt()),
+                    TypedReceipt::Deposit(r) => TypedReceipt::Deposit(DepositReceipt {
+                        inner: r.inner.into_primitives_receipt(),
+                        deposit_nonce: r.deposit_nonce,
+                        deposit_receipt_version: r.deposit_receipt_version,
+                    }),
+                };
+
+                receipt.encode_2718(&mut buf);
+                Bytes::from(buf)
+            })
+            .collect();
+
+        Ok(Some(raw))
     }
 
     /// Returns traces for the transaction hash for geth's tracing endpoint
