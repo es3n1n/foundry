@@ -899,6 +899,29 @@ async fn test_tx_receipt() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_receipts() {
+    use alloy_rpc_types::BlockId;
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let bytecode: Bytes = hex!("60006000a0600080f3").into();
+
+    let tx = TransactionRequest::default().from(from).input(bytecode.into()).value(U256::ZERO);
+    let pending = provider.send_transaction(WithOtherFields::new(tx)).await.unwrap();
+
+    pending.get_receipt().await.expect("receipt should be available");
+
+    let raw =
+        api.debug_get_raw_receipts(BlockId::latest()).await.unwrap().expect("block must exist");
+
+    let bytes = raw[0].as_ref();
+    eprintln!("bytes({:?})", bytes);
+    assert!(false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_stream_pending_transactions() {
     let (_api, handle) =
         spawn(NodeConfig::test().with_blocktime(Some(Duration::from_secs(2)))).await;
